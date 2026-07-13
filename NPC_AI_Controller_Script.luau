@@ -1,9 +1,9 @@
--- Here is my verification: 
--- Discord: Discombobulationary    Roblox: progaming_master2
+-- Connected Discord-GitHub | Discord Username: Discombobulationary | Roblox Username: progaming_master2
 
 local PathfindingService = game:GetService('PathfindingService')
 local RunService          = game:GetService('RunService')
 
+-- Global configuration settings to easily tweak NPC behavior and movement variables in one place
 local CONFIG = {
 	WANDER_RADIUS    = 80,
 	IDLE_MIN         = 0.5,
@@ -27,9 +27,11 @@ local CONFIG = {
 
 local npcFolder = workspace:WaitForChild('NPCFolder', 10)
 
+-- Global pause switch handling so the entire system can be toggled externally if needed
 local NPCPausedValue = game:GetService('ReplicatedStorage'):WaitForChild('NPCPaused')
 local function getNPCPaused() return NPCPausedValue.Value end
 
+-- Generates a random point within a circular radius to calculate the wander target vector
 local function randomWanderTarget(origin)
 	local angle   = math.random() * math.pi * 2
 	local radius = math.sqrt(math.random()) * CONFIG.WANDER_RADIUS 
@@ -38,6 +40,7 @@ local function randomWanderTarget(origin)
 	return Vector3.new(x, origin.Y, z)
 end
 
+-- Uses raycasting to snap the target vector to the actual ground geometry surface
 local function getGroundY(pos)
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -46,6 +49,7 @@ local function getGroundY(pos)
 	return ray and ray.Position.Y or 0
 end
 
+-- Math formula for calculating smooth curves between paths
 local function catmullRom(p0, p1, p2, p3, t)
 	local t2, t3 = t*t, t*t*t
 	return 0.5 * (
@@ -55,6 +59,7 @@ local function catmullRom(p0, p1, p2, p3, t)
 	)
 end
 
+-- Adds variations and curves to standard path nodes to make NPC movements look less robotic
 local function curveWaypoints(waypoints)
 	if #waypoints < 2 then return waypoints end
 	local ctrl = {}
@@ -80,6 +85,7 @@ local function curveWaypoints(waypoints)
 	return result
 end
 
+-- Raycasts ahead of the NPC to dynamically check for dynamic obstacles and decide to jump or recalculate
 local function checkObstacleAhead(hrp, targetPos)
 	local dir = (targetPos - hrp.Position)
 	dir = Vector3.new(dir.X, 0, dir.Z)
@@ -106,6 +112,7 @@ local function checkObstacleAhead(hrp, targetPos)
 	else return 'skip' end
 end
 
+-- Checks neighboring agents within a folder to apply separation vectors so NPCs do not clip through each other
 local function getCrowdAvoidanceVector(myHrp)
 	if not npcFolder then return Vector3.zero end
 	local avoidanceField = Vector3.zero
@@ -139,6 +146,7 @@ local ANIM_IDS = {
 	fall  = { 'rbxassetid://180436148' },
 }
 
+-- Simple animation manager wrapper using Humanoid Animator objects
 local function buildAnimDriver(humanoid)
 	local animator = humanoid:FindFirstChildOfClass('Animator')
 	if not animator then
@@ -172,6 +180,7 @@ local function buildAnimDriver(humanoid)
 	return driver
 end
 
+-- Core lifecycle setup loop for initialization of an individual agent model
 local function createAgent(npc)
 	local humanoid = npc:FindFirstChildOfClass('Humanoid')
 	local hrp = npc:FindFirstChild('HumanoidRootPart')
@@ -179,12 +188,14 @@ local function createAgent(npc)
 		warn('[NPC AI] ' .. npc.Name .. ' missing parts') return
 	end
 
+	-- Randomized stats give NPCs slightly different movement speeds
 	humanoid.WalkSpeed = math.random(CONFIG.SPEED_MIN, CONFIG.SPEED_MAX)
 	humanoid.JumpPower = 50
 
 	local anim = buildAnimDriver(humanoid)
 	local currentHumanoidState = Enum.HumanoidStateType.None
 
+	-- Humanoid state connection listeners to seamlessly swap track priorities
 	humanoid.Running:Connect(function(speed)
 		if currentHumanoidState ~= Enum.HumanoidStateType.Freefall and currentHumanoidState ~= Enum.HumanoidStateType.Jumping then
 			if speed > 0.5 then anim:play('walk', 0.1) else anim:play('idle', 0.2) end
@@ -222,6 +233,7 @@ local function createAgent(npc)
 	local lastJumpAt = 0
 	local isIdle       = false
 
+	-- Simulates natural head and body turning adjustments during periods of inactivity
 	local idleTargetYaw = hrp.CFrame.LookVector
 	local idleTurnConn
 	local function startIdleTurn(targetDir)
@@ -231,7 +243,7 @@ local function createAgent(npc)
 			if not hrp or not hrp.Parent or not isIdle then
 				if idleTurnConn then idleTurnConn:Disconnect() end return
 			end
-			local cur  = hrp.CFrame.LookVector
+			local cur   = hrp.CFrame.LookVector
 			local flat = Vector3.new(idleTargetYaw.X, 0, idleTargetYaw.Z)
 			if flat.Magnitude < 0.01 then return end
 			flat = flat.Unit
@@ -242,6 +254,7 @@ local function createAgent(npc)
 		end)
 	end
 
+	-- Isolated asynchronous task routine driving the primary AI behavioral loop
 	task.spawn(function()
 		task.wait(math.random() * 2)
 
@@ -249,6 +262,7 @@ local function createAgent(npc)
 			while getNPCPaused() do task.wait(0.1) end
 			isIdle = false
 
+			-- Attempts to generate valid path computations with a retry buffer to prevent instantly crashing on failure
 			local destination, path, success = nil, nil, false
 			for _ = 1, CONFIG.PATH_RETRIES do
 				destination = randomWanderTarget(hrp.Position)
@@ -263,6 +277,7 @@ local function createAgent(npc)
 			local waypoints   = curveWaypoints(path:GetWaypoints())
 			local pathAborted = false
 
+			-- Waypoint iteration tracking loop handles individual target point translation
 			for i, waypoint in ipairs(waypoints) do
 				if i == 1 then continue end
 				if not npc.Parent or humanoid.Health <= 0 then return end
@@ -277,6 +292,7 @@ local function createAgent(npc)
 				local startTime = tick()
 				local reached   = false
 
+				-- Keeps moving the NPC toward the current waypoint vector, adjusting for crowd avoidance forces along the way
 				while not reached do
 					RunService.Heartbeat:Wait()
 					if not npc.Parent or humanoid.Health <= 0 then return end
@@ -309,6 +325,7 @@ local function createAgent(npc)
 				if pathAborted then break end
 			end
 
+			-- Reset velocity and enter idle state sequence after successfully reaching a target destination
 			humanoid:Move(Vector3.zero)
 			isIdle = true
 			local idleTime = CONFIG.IDLE_MIN + math.random()*(CONFIG.IDLE_MAX-CONFIG.IDLE_MIN)
@@ -327,6 +344,7 @@ local function createAgent(npc)
 	end)
 end
 
+-- Scan the designated workspace directory to track existing entries and listen for future instances dynamically
 local function initAllNPCs()
 	if not npcFolder then warn('[NPC AI] NPCFolder not found') return end
 	for _, npc in ipairs(npcFolder:GetChildren()) do
